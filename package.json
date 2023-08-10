@@ -1,0 +1,16 @@
+{
+  "name": "starknet-wallet-upgrade",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "dependencies": {
+    "starknet": "^5.14.1"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "retrodrop.tools",
+  "license": "MIT",
+  "description": ""
+}
