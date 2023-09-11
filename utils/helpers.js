@@ -145,7 +145,7 @@ const buildUpgradePayload = async (address, implementation) => {
                 return null;
             }
         case 'braavos':
-            if (implementation !== 1248670563713690606167884949522112014596193925882063533119316663353499342052n) {
+            if (implementation !== 2655151451055183738536515324425311349966178541063137855096471676700129075298n) {
                 return [{
                     contractAddress: address,
                     entrypoint: 'upgrade',
