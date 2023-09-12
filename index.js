@@ -1,8 +1,8 @@
 import { processWallets } from './utils/helpers.js';
 
-export const walletName = 'argent' // braavos | argent
+export const walletName = 'braavos' // braavos | argent
 export const numUpgraders = 5;
-export const delay = [20, 120];
+export const delay = [1, 1];
 
 async function main() {
     await processWallets();

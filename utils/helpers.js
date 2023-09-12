@@ -1,19 +1,18 @@
 import fs from 'fs';
-import { Account, CallData, Contract, ec, hash, RpcProvider, TransactionStatus } from 'starknet';
+import { Account, CallData, constants, Contract, ec, hash, Provider, TransactionStatus } from 'starknet';
 import { delay, numUpgraders, walletName } from '../index.js';
-import { ArgentAbi, BraavosAbi } from './abi.js';
+import { BraavosAbi } from './abi.js';
 
 import {
-    argentXaccountClassHash,
+    argentXaccountClassHash, argentXaccountClassHashNew,
     argentXproxyClassHash,
-    braavosAccountClassHash,
+    braavosAccountClassHashNew,
     braavosInitialClassHash,
     braavosProxyClassHash,
-    rpc,
     starkscan
 } from './constants.js';
 
-const provider = new RpcProvider({ nodeUrl: rpc });
+const provider = new Provider({ sequencer: { network: constants.NetworkName.SN_MAIN }});
 
 export const loadArgentWallets = async () => {
     try {
@@ -98,10 +97,15 @@ const calculateBraavosAddress = async (key) => {
 };
 
 
-const getWalletImplementation = async (contractAbi, address) => {
-    const contract = await new Contract(contractAbi, address, provider);
-    return await contract.functions.get_implementation();
+const getArgentImplementation = async (address) => {
+    return await provider.getClassHashAt(address);
 };
+
+
+const getBraavosImplementation = async (address) => {
+    const contract = await new Contract(BraavosAbi, address, provider);
+    return await contract.functions.get_implementation();
+}
 
 
 
@@ -120,9 +124,9 @@ const getAddress = async (walletName, key) => {
 const getImplementation = async (walletName, address) => {
     switch (walletName) {
         case 'argent':
-            return await getWalletImplementation(ArgentAbi, address);
+            return await getArgentImplementation(address);
         case 'braavos':
-            return await getWalletImplementation(BraavosAbi, address);
+            return (await getBraavosImplementation(address)).implementation;
         default:
             throw new Error('Unknown walletName');
     }
@@ -132,12 +136,13 @@ const getImplementation = async (walletName, address) => {
 const buildUpgradePayload = async (address, implementation) => {
     switch (walletName) {
         case 'argent':
-            if (implementation !== 1449178161945088530446351771646113898511736767359683664273252560520029776866n) {
+            if (implementation !== '0x1a736d6ed154502257f02b1ccdf4d9d1089f80811cd6acad48e6b6a9d1f2003') {
                 return [{
                     contractAddress: address,
                     entrypoint: 'upgrade',
                     calldata: CallData.compile({
-                        implementation: argentXaccountClassHash,
+                        implementation: argentXaccountClassHashNew,
+                        calldata: ['0'],
                     })
                 }];
             } else {
@@ -150,7 +155,7 @@ const buildUpgradePayload = async (address, implementation) => {
                     contractAddress: address,
                     entrypoint: 'upgrade',
                     calldata: CallData.compile({
-                        new_implementation: braavosAccountClassHash,
+                        new_implementation: braavosAccountClassHashNew,
                     })
                 }];
             } else {
@@ -172,7 +177,7 @@ const executeAndWaitTx = async (account, txPayload, address) => {
             console.log(`See transaction on explorer: ${ starkscan + executeHash.transaction_hash }`);
         }
     } catch (error) {
-        console.error(`An error occurred while upgrading wallet | ${address}`)
+        console.error(`An error occurred while upgrading wallet | ${address} = ${error.message}`);
     }
 };
 
@@ -185,7 +190,7 @@ export const txUpdateWallets = async (key) => {
     await sleep();
     console.log(`Checking wallet version for address ${address} | ${walletName}`);
     try {
-        let implementation = (await getImplementation(walletName, address)).implementation;
+        let implementation = await getImplementation(walletName, address);
 
         const txPayload = await buildUpgradePayload(address, implementation);
         if (txPayload !== null) {
