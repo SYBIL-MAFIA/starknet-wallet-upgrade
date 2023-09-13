@@ -1,10 +1,13 @@
 import fs from 'fs';
-import { Account, CallData, constants, Contract, ec, hash, Provider, TransactionStatus } from 'starknet';
-import { delay, numUpgraders, walletName } from '../index.js';
+import { Account, CallData, constants, Contract, ec, hash, Provider } from 'starknet';
+import { HDKey } from '@scure/bip32';
+import { mnemonicToSeedSync } from '@scure/bip39';
+import { delay, ERC20, maxGwei, numUpgraders, shuffle, UseMmnemonic, walletName } from '../index.js';
 import { BraavosAbi } from './abi.js';
-
+import { HDNodeWallet, Wallet, JsonRpcProvider, formatUnits } from 'ethers';
 import {
-    argentXaccountClassHash, argentXaccountClassHashNew,
+    argentXaccountClassHash,
+    argentXaccountClassHashNew,
     argentXproxyClassHash,
     braavosAccountClassHashNew,
     braavosInitialClassHash,
@@ -14,9 +17,10 @@ import {
 
 const provider = new Provider({ sequencer: { network: constants.NetworkName.SN_MAIN }});
 
+
 export const loadArgentWallets = async () => {
     try {
-        return fs.readFileSync('./data/private_keys.txt', "utf8")
+        return fs.readFileSync('./data/starkData.txt', "utf8")
             .split("\n")
             .map(row => row.trim())
             .filter(row => row !== "") ;
@@ -61,7 +65,7 @@ const calculateArgentAddress = async (privateKey) => {
         ConstructorCallData,
         0
     );
-}
+};
 
 
 const calculateInitializer = async (publicKey) => {
@@ -98,14 +102,34 @@ const calculateBraavosAddress = async (key) => {
 
 
 const getArgentImplementation = async (address) => {
-    return await provider.getClassHashAt(address);
+    try {
+        return await provider.getClassHashAt(address);
+    } catch (error) {
+        if (error.message && error.message.includes("is not deployed")) {
+            console.log("Wallet is not deployed yet.");
+            return undefined;
+        } else {
+            console.log('An error occurred', error);
+            return undefined;
+        }
+    }
 };
 
 
 const getBraavosImplementation = async (address) => {
-    const contract = await new Contract(BraavosAbi, address, provider);
-    return await contract.functions.get_implementation();
-}
+    try {
+        const contract = await new Contract(BraavosAbi, address, provider);
+        return await contract.functions.get_implementation();
+    } catch (error) {
+        if (error.message && error.message.includes("is not deployed")) {
+            console.log(`Wallet is not deployed yet - ${address}.`);
+            return undefined;
+        } else {
+            console.log(`${address} - An error occurred ${error}.`);
+            return undefined;
+        }
+    }
+};
 
 
 
@@ -124,9 +148,19 @@ const getAddress = async (walletName, key) => {
 const getImplementation = async (walletName, address) => {
     switch (walletName) {
         case 'argent':
-            return await getArgentImplementation(address);
+            const implementation = await getArgentImplementation(address);
+            if (implementation !== undefined) {
+                return implementation;
+            } else {
+                return undefined;
+            }
         case 'braavos':
-            return (await getBraavosImplementation(address)).implementation;
+            const implementationBraavos = (await getBraavosImplementation(address));
+            if (implementationBraavos !== undefined) {
+                return implementationBraavos.implementation;
+            } else {
+                return undefined;
+            }
         default:
             throw new Error('Unknown walletName');
     }
@@ -167,11 +201,32 @@ const buildUpgradePayload = async (address, implementation) => {
     }
 };
 
+export const WaitForGas = async () => {
+    try {
+        const provider = new JsonRpcProvider(ERC20);
+        while (true) {
+            const latestBlock = await provider.getBlock('latest');
+            let baseFee = latestBlock.baseFeePerGas;
+            let current_gas = parseFloat(formatUnits(baseFee, 'gwei'));
+            if (current_gas >= maxGwei) {
+                console.log(`Gas is high, waiting for 1 min.... current ${current_gas} | max ${maxGwei}`);
+                await sleep(60);
+            } else {
+                return true;
+            }
+        }
+    } catch (e) {
+        console.log(e);
+        throw new Error(e);
+    }
+};
+
 
 const executeAndWaitTx = async (account, txPayload, address) => {
     try {
+        await WaitForGas()
         const executeHash = await account.execute(txPayload);
-        const res = await provider.waitForTransaction(executeHash.transaction_hash, { successStates: [TransactionStatus.ACCEPTED_ON_L2] });
+        const res = await provider.waitForTransaction(executeHash.transaction_hash);
         if (res) {
             console.log('Wallet successfully upgraded');
             console.log(`See transaction on explorer: ${ starkscan + executeHash.transaction_hash }`);
@@ -184,15 +239,17 @@ const executeAndWaitTx = async (account, txPayload, address) => {
 
 export const txUpdateWallets = async (key) => {
 
-    const address = await getAddress(walletName, key)
+    const address = await getAddress(walletName, key);
     const account = new Account(provider, address, key);
 
     await sleep();
     console.log(`Checking wallet version for address ${address} | ${walletName}`);
     try {
         let implementation = await getImplementation(walletName, address);
-
-        const txPayload = await buildUpgradePayload(address, implementation);
+        let txPayload;
+        if (implementation !== undefined) {
+            txPayload = await buildUpgradePayload(address, implementation);
+        }
         if (txPayload !== null) {
             await executeAndWaitTx(account, txPayload, address);
         }
@@ -201,9 +258,76 @@ export const txUpdateWallets = async (key) => {
     }
 };
 
+const getPKFromMnemonicArgent = async(mnemonics)=>{
+    let pk = []
+    const path = "m/44'/9004'/0'/0/0";
+
+    for (const mnemonic of mnemonics) {
+        const signer = (Wallet.fromPhrase(mnemonic)).privateKey;
+        const masterNode = HDNodeWallet.fromSeed(
+            toHexString(signer));
+        const childNode = masterNode.derivePath(path);
+
+        pk.push('0x' + ec.starkCurve.grindKey(childNode.privateKey).toString());
+    }
+
+    return pk;
+};
+
+const getPkFromMnemonicBraavos = async (mnemonics) => {
+    let pk = [];
+    const path = "m/44'/9004'/0'/0/0";
+
+    for (const mnemonic of mnemonics) {
+        const seed = mnemonicToSeedSync(mnemonic);
+        const hdKey = HDKey.fromMasterSeed(seed);
+        const hdKeyDerived = hdKey.derive(path);
+
+        pk.push("0x" + ec.starkCurve.grindKey(hdKeyDerived.privateKey).toString());
+    }
+
+    return pk;
+};
+
+
+export const getPkFromMnemo = async (mnemonics) => {
+    switch (walletName) {
+        case 'argent':
+            return await getPKFromMnemonicArgent(mnemonics);
+        case 'braavos':
+            return await getPkFromMnemonicBraavos(mnemonics);
+        default:
+            throw new Error('Unknown walletName');
+    }
+}
+
+const toHexString = (value) => {
+    let hex = BigInt(value).toString(16);
+    if (hex.length % 2 !== 0) {
+        hex = '0' + hex;
+    }
+    return '0x' + hex;
+};
+
+
+const shuffleWallets = async (wallets) => {
+    for (let i = wallets.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [wallets[i], wallets[j]] = [wallets[j], wallets[i]];
+    }
+    return wallets;
+}
+
 
 export const processWallets = async () => {
-    const wallets = await loadArgentWallets();
+    let wallets = await loadArgentWallets();
+    if (UseMmnemonic) {
+        wallets = await getPkFromMnemo(wallets);
+    }
+
+    if (shuffle) {
+        wallets = await shuffleWallets(wallets);
+    }
 
     let index = 0;
     while (index < wallets.length) {
