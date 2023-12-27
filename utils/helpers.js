@@ -1,5 +1,5 @@
 import fs from 'fs';
-import { Account, CallData, constants, Contract, ec, hash, Provider } from 'starknet';
+import { Account, CallData, constants, Contract, ec, hash, RpcProvider } from 'starknet';
 import { HDKey } from '@scure/bip32';
 import { mnemonicToSeedSync } from '@scure/bip39';
 import { delay, ERC20, maxGwei, numUpgraders, shuffle, UseMmnemonic, walletName } from '../index.js';
@@ -15,7 +15,7 @@ import {
     starkscan
 } from './constants.js';
 
-const provider = new Provider({ sequencer: { network: constants.NetworkName.SN_MAIN }});
+const provider = new RpcProvider({nodeUrl: "https://starknet.blockpi.network/v1/rpc/public", retries:3})
 
 
 export const loadArgentWallets = async () => {
