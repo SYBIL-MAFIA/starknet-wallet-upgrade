@@ -15,7 +15,7 @@ import {
     starkscan
 } from './constants.js';
 
-const provider = new RpcProvider({nodeUrl: "https://starknet.blockpi.network/v1/rpc/public", retries:3})
+const provider = new RpcProvider({nodeUrl: "https://starknet.blockpi.network/v1/rpc/public", retries:300})
 
 
 export const loadArgentWallets = async () => {
